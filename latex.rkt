@@ -1,27 +1,34 @@
 #lang racket
 
-
 (define auto-parenthesize? (make-parameter #false))
-(define (group s) (if (auto-parenthesize?) (parenthesize s) (~a "{" s "}")))
-(define parenthesize (curry format "{\\left({~a}\\right)}"))
+(define (parenthesize s) (~a "\\left(" s "\\right)"))
+
+(define (group s) (~a "{" s "}"))
+
+(define (^ s1 s2) (~a s1 '^ s2))
 
 (require (only-in "match.rkt" cat))
 
 (define (→latex expr) (cat ↓ →latex)
-  (match expr
-    [`(sqr ,e) (↓ `(power ,e 2))]
-    [`(power ,(↓ e1) ,(↓ e2)) (~a (group e1) '^ (group e2))]
-    [`(+ ,(↓ e1) ,(↓ e2)) (~a (group e1) '+ (group e2))]
-    [`(,(↓ e)) (parenthesize e)]
-    [n #:when (number? n) (~a n)]))
+  (define parenthesize′     (if (auto-parenthesize?) identity parenthesize))
+  (define auto-parenthesize (if (auto-parenthesize?) parenthesize identity))
+  (group (match expr
+           ; Delegated:
+           [`(sqr ,e) (↓ `(power ,e 2))]
+           ; Compound:
+           [`(power ,(↓ e1) ,(↓ e2)) (auto-parenthesize (^ e1 e2))]
+           [`(+ ,(↓ e) ...) (auto-parenthesize (apply ~a #:separator "+" e))]
+           ; Explicit parenthesization:
+           [`(,(↓ e)) (parenthesize′ e)]
+           ; Atomic:
+           [n #:when (number? n) (~a n)])))
 
 (module+ test (require rackunit)
   (parameterize ([auto-parenthesize? #true])
-    (check-equal? (→latex 123) "123")
-    (check-equal? (→latex '(power 123 456)) "{\\left({123}\\right)}^{\\left({456}\\right)}")
-    (check-equal? (→latex '(sqr 123)) "{\\left({123}\\right)}^{\\left({2}\\right)}")
+    (check-equal? (→latex 123) "{123}")
+    (check-equal? (→latex '(power 123 456)) "{\\left({123}^{456}\\right)}")
+    (check-equal? (→latex '(sqr 123)) "{{\\left({123}^{2}\\right)}}")
     (check-equal? (→latex '(sqr (power 123 456)))
-                  (~a "{\\left({{\\left({123}\\right)}^{\\left({456}\\right)}}\\right)}"
-                      "^{\\left({2}\\right)}")))
-  (check-equal? (→latex '(sqr ((power ((+ 123 678)) 456))))
-                "{{\\left({{{\\left({{123}+{678}}\\right)}}^{456}}\\right)}}^{2}"))
+                  "{{\\left({\\left({123}^{456}\\right)}^{2}\\right)}}"))
+  (check-equal? (→latex '(sqr ((power ((+ 12 34 56)) 78))))
+                "{{{\\left({{\\left({{12}+{34}+{56}}\\right)}^{78}}\\right)}^{2}}}"))
